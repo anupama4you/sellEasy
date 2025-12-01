@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "SellEasy",
-    "slug": "SellEasy",
+    "slug": "selleasy",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -10,21 +10,61 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#007AFF"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.selleasy.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "SellEasy needs access to your camera to take photos of items you want to sell.",
+        "NSPhotoLibraryUsageDescription": "SellEasy needs access to your photo library to select images of items you want to sell.",
+        "LSApplicationQueriesSchemes": [
+          "fb",
+          "fbapi",
+          "fbauth2",
+          "fbshareextension"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#007AFF"
       },
+      "package": "com.selleasy.app",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "category": ["DEFAULT", "BROWSABLE"],
+          "data": {
+            "scheme": "fb"
+          }
+        }
+      ],
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow SellEasy to access your camera to take photos of items."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow SellEasy to access your photos to select images of items."
+        }
+      ]
+    ]
   }
 }
