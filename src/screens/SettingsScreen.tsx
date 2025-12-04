@@ -7,22 +7,105 @@ import {
   TouchableOpacity,
   Alert,
   SafeAreaView,
-  Linking
+  Linking,
+  TextInput,
+  ActivityIndicator
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { FacebookMarketplaceService } from '../services/facebookMarketplaceService';
+import { ChatGPTService } from '../services/chatgptService';
 
 export default function SettingsScreen() {
   const navigation = useNavigation();
   const [hasFacebookApp, setHasFacebookApp] = useState(false);
+  const [chatGPTApiKey, setChatGPTApiKey] = useState('');
+  const [hasChatGPTKey, setHasChatGPTKey] = useState(false);
+  const [apiKeySource, setApiKeySource] = useState<'user' | 'env' | 'none'>('none');
+  const [isTestingAPI, setIsTestingAPI] = useState(false);
+  const [showApiInput, setShowApiInput] = useState(false);
 
   useEffect(() => {
     checkFacebookApp();
+    checkChatGPTKey();
   }, []);
 
   const checkFacebookApp = async () => {
     const hasApp = await FacebookMarketplaceService.isFacebookAppInstalled();
     setHasFacebookApp(hasApp);
+  };
+
+  const checkChatGPTKey = async () => {
+    const hasKey = await ChatGPTService.hasApiKey();
+    const source = await ChatGPTService.getApiKeySource();
+
+    setHasChatGPTKey(hasKey);
+    setApiKeySource(source);
+
+    if (hasKey) {
+      const key = await ChatGPTService.getApiKey();
+      if (key) {
+        // Show masked version
+        setChatGPTApiKey(`${key.substring(0, 10)}...${key.substring(key.length - 4)}`);
+      }
+    }
+  };
+
+  const saveChatGPTKey = async () => {
+    if (!chatGPTApiKey.trim()) {
+      Alert.alert('Error', 'Please enter a valid API key');
+      return;
+    }
+
+    try {
+      await ChatGPTService.setApiKey(chatGPTApiKey.trim());
+      setHasChatGPTKey(true);
+      setShowApiInput(false);
+      Alert.alert('Success!', 'ChatGPT API key saved successfully');
+      checkChatGPTKey();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to save API key');
+    }
+  };
+
+  const testChatGPTConnection = async () => {
+    setIsTestingAPI(true);
+
+    try {
+      const connected = await ChatGPTService.testConnection();
+
+      if (connected) {
+        Alert.alert('Success!', 'ChatGPT API is working correctly');
+      } else {
+        Alert.alert(
+          'Connection Failed',
+          'Could not connect to ChatGPT API. Please check your API key.'
+        );
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to test connection');
+    } finally {
+      setIsTestingAPI(false);
+    }
+  };
+
+  const removeChatGPTKey = () => {
+    Alert.alert(
+      'Remove API Key',
+      'Are you sure you want to remove the ChatGPT API key?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            await ChatGPTService.setApiKey('');
+            setChatGPTApiKey('');
+            setHasChatGPTKey(false);
+            Alert.alert('Removed', 'ChatGPT API key has been removed');
+          }
+        }
+      ]
+    );
   };
 
   const testFacebookConnection = async () => {
@@ -52,7 +135,7 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView style={styles.content}>
-        {/* Status */}
+        {/* Facebook Status */}
         <View style={styles.statusCard}>
           <Text style={styles.statusTitle}>Facebook Connection</Text>
           <View style={styles.statusIndicator}>
@@ -69,6 +152,115 @@ export default function SettingsScreen() {
           <TouchableOpacity style={styles.testButton} onPress={testFacebookConnection}>
             <Text style={styles.testButtonText}>Test Facebook Connection</Text>
           </TouchableOpacity>
+        </View>
+
+        {/* ChatGPT API Configuration */}
+        <View style={styles.statusCard}>
+          <Text style={styles.statusTitle}>🤖 ChatGPT API (Enhanced AI)</Text>
+          <View style={styles.statusIndicator}>
+            <View
+              style={[
+                styles.statusDot,
+                hasChatGPTKey ? styles.statusDotConnected : styles.statusDotDisconnected
+              ]}
+            />
+            <View>
+              <Text style={styles.statusText}>
+                {hasChatGPTKey ? 'API Key Configured' : 'Using Basic AI'}
+              </Text>
+              {apiKeySource === 'env' && (
+                <Text style={styles.statusSubtext}>
+                  Source: Environment Variable (.env)
+                </Text>
+              )}
+              {apiKeySource === 'user' && (
+                <Text style={styles.statusSubtext}>
+                  Source: User Settings
+                </Text>
+              )}
+            </View>
+          </View>
+
+          {hasChatGPTKey && !showApiInput && (
+            <>
+              <View style={styles.apiKeyDisplay}>
+                <Text style={styles.apiKeyText}>{chatGPTApiKey}</Text>
+              </View>
+              <View style={styles.buttonRow}>
+                <TouchableOpacity
+                  style={[styles.testButton, styles.testButtonHalf, isTestingAPI && styles.testButtonDisabled]}
+                  onPress={testChatGPTConnection}
+                  disabled={isTestingAPI}
+                >
+                  {isTestingAPI ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.testButtonText}>Test API</Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.testButton, styles.testButtonHalf, styles.removeButton]}
+                  onPress={removeChatGPTKey}
+                >
+                  <Text style={styles.testButtonText}>Remove</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {(!hasChatGPTKey || showApiInput) && (
+            <>
+              <View style={styles.apiInputContainer}>
+                <TextInput
+                  style={styles.apiInput}
+                  placeholder="Enter OpenAI API Key (sk-...)"
+                  value={chatGPTApiKey}
+                  onChangeText={setChatGPTApiKey}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry={!showApiInput}
+                />
+              </View>
+              <TouchableOpacity style={styles.testButton} onPress={saveChatGPTKey}>
+                <Text style={styles.testButtonText}>Save API Key</Text>
+              </TouchableOpacity>
+              {showApiInput && (
+                <TouchableOpacity
+                  style={[styles.testButton, styles.cancelButton]}
+                  onPress={() => {
+                    setShowApiInput(false);
+                    checkChatGPTKey();
+                  }}
+                >
+                  <Text style={styles.testButtonText}>Cancel</Text>
+                </TouchableOpacity>
+              )}
+            </>
+          )}
+
+          {hasChatGPTKey && !showApiInput && (
+            <TouchableOpacity
+              style={[styles.testButton, styles.changeButton]}
+              onPress={() => {
+                setChatGPTApiKey('');
+                setShowApiInput(true);
+              }}
+            >
+              <Text style={styles.testButtonText}>Change API Key</Text>
+            </TouchableOpacity>
+          )}
+
+          <View style={styles.infoBox}>
+            <Text style={styles.infoBoxText}>
+              💡 ChatGPT Vision API provides enhanced image analysis, better descriptions, and accurate pricing estimates.
+            </Text>
+            <Text style={styles.infoBoxText} style={{ marginTop: 8 }}>
+              Get your API key at: platform.openai.com/api-keys
+            </Text>
+            <Text style={styles.infoBoxText} style={{ marginTop: 8 }}>
+              💻 Developer Tip: Add OPENAI_API_KEY to .env file for automatic configuration
+            </Text>
+          </View>
         </View>
 
         {/* How It Works */}
@@ -263,6 +455,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666'
   },
+  statusSubtext: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 2,
+    fontStyle: 'italic'
+  },
   testButton: {
     backgroundColor: '#007AFF',
     borderRadius: 8,
@@ -392,5 +590,63 @@ const styles = StyleSheet.create({
   },
   bottomPadding: {
     height: 40
+  },
+  apiKeyDisplay: {
+    backgroundColor: '#f0f0f0',
+    padding: 12,
+    borderRadius: 8,
+    marginVertical: 12
+  },
+  apiKeyText: {
+    fontFamily: 'monospace',
+    fontSize: 12,
+    color: '#333',
+    textAlign: 'center'
+  },
+  apiInputContainer: {
+    marginVertical: 12
+  },
+  apiInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    backgroundColor: '#fafafa'
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8
+  },
+  testButtonHalf: {
+    flex: 1
+  },
+  testButtonDisabled: {
+    opacity: 0.6
+  },
+  removeButton: {
+    backgroundColor: '#ef4444'
+  },
+  changeButton: {
+    backgroundColor: '#6366f1',
+    marginTop: 8
+  },
+  cancelButton: {
+    backgroundColor: '#9ca3af',
+    marginTop: 8
+  },
+  infoBox: {
+    backgroundColor: '#fffbeb',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#f59e0b'
+  },
+  infoBoxText: {
+    fontSize: 12,
+    color: '#78350f',
+    lineHeight: 18
   }
 });

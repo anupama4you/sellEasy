@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,30 +10,47 @@ import {
   Alert,
   ActivityIndicator,
   ToastAndroid,
-  Platform
+  Platform,
+  Dimensions
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RouteProp } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import * as MediaLibrary from 'expo-media-library';
-import { RootStackParamList, ProductListing } from '../types';
+import { RootStackParamList, ProductListing, ProductImage } from '../types';
 import { FacebookMarketplaceService } from '../services/facebookMarketplaceService';
+import { WatermarkService } from '../services/watermarkService';
 
 type PreviewScreenRouteProp = RouteProp<RootStackParamList, 'Preview'>;
 type PreviewScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Preview'>;
 
 type CopiedField = 'title' | 'price' | 'description' | 'photo' | null;
 
+const { width } = Dimensions.get('window');
+
 export default function PreviewScreen() {
   const route = useRoute<PreviewScreenRouteProp>();
   const navigation = useNavigation<PreviewScreenNavigationProp>();
   const { listing: initialListing } = route.params;
 
-  const [listing, setListing] = useState<ProductListing>(initialListing);
+  const [listing, setListing] = useState<ProductListing>({
+    ...initialListing,
+    images: initialListing.images || [
+      {
+        uri: initialListing.imageUri,
+        isFromCamera: false,
+        hasWatermark: false,
+        timestamp: new Date()
+      }
+    ]
+  });
   const [isPosting, setIsPosting] = useState(false);
+  const [isWatermarking, setIsWatermarking] = useState(false);
   const [copiedFields, setCopiedFields] = useState<Set<CopiedField>>(new Set());
   const [showGuide, setShowGuide] = useState(false);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [watermarkedImages, setWatermarkedImages] = useState<ProductImage[]>([]);
 
   const updateField = (field: keyof ProductListing, value: any) => {
     setListing(prev => ({ ...prev, [field]: value }));
@@ -61,20 +78,90 @@ export default function PreviewScreen() {
     showToast(messages[field as string] || 'Copied!');
   };
 
-  const savePhotoToGallery = async () => {
+  // Auto-watermark camera images on mount
+  useEffect(() => {
+    watermarkCameraImages();
+  }, []);
+
+  const watermarkCameraImages = async () => {
+    setIsWatermarking(true);
+
     try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please grant photo library permission to save the photo');
+      const imagesToWatermark = listing.images.filter(
+        img => img.isFromCamera && !img.hasWatermark
+      );
+
+      if (imagesToWatermark.length === 0) {
+        setIsWatermarking(false);
         return;
       }
 
-      await MediaLibrary.saveToLibraryAsync(listing.imageUri);
-      setCopiedFields(prev => new Set(prev).add('photo'));
-      showToast('📸 Photo saved to gallery! Upload it in Facebook');
+      const watermarked = await WatermarkService.watermarkMultipleImages(listing.images);
+      setWatermarkedImages(watermarked);
+
+      setListing(prev => ({
+        ...prev,
+        images: watermarked
+      }));
+
+      const cameraImageCount = imagesToWatermark.length;
+      showToast(
+        `✅ ${cameraImageCount} camera ${cameraImageCount === 1 ? 'photo' : 'photos'} watermarked with "SellEasy Verified"`
+      );
     } catch (error) {
-      Alert.alert('Error', 'Failed to save photo');
+      console.error('Error watermarking images:', error);
+    } finally {
+      setIsWatermarking(false);
     }
+  };
+
+  const saveAllPhotosToGallery = async () => {
+    try {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Please grant photo library permission to save photos');
+        return;
+      }
+
+      setIsPosting(true);
+
+      // Save only camera photos with watermarks
+      const cameraImages = listing.images.filter(img => img.isFromCamera);
+
+      if (cameraImages.length === 0) {
+        Alert.alert(
+          'No Camera Photos',
+          'Only photos taken with camera can be saved with "SellEasy Verified" watermark.\n\nGallery images will not be watermarked.'
+        );
+        setIsPosting(false);
+        return;
+      }
+
+      let savedCount = 0;
+      for (const image of cameraImages) {
+        try {
+          const uriToSave = image.watermarkedUri || image.uri;
+          await MediaLibrary.saveToLibraryAsync(uriToSave);
+          savedCount++;
+        } catch (error) {
+          console.error(`Failed to save image ${image.uri}:`, error);
+        }
+      }
+
+      setCopiedFields(prev => new Set(prev).add('photo'));
+      showToast(
+        `📸 ${savedCount} watermarked ${savedCount === 1 ? 'photo' : 'photos'} saved to gallery!`
+      );
+
+      setIsPosting(false);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to save photos');
+      setIsPosting(false);
+    }
+  };
+
+  const savePhotoToGallery = async () => {
+    await saveAllPhotosToGallery();
   };
 
   const copyAllAndPost = async () => {
@@ -174,16 +261,76 @@ export default function PreviewScreen() {
       )}
 
       <ScrollView style={styles.content}>
-        {/* Image Preview with Save Button */}
+        {/* Multiple Images Preview with Carousel */}
         <View style={styles.imageContainer}>
-          <Image source={{ uri: listing.imageUri }} style={styles.image} />
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(e) => {
+              const index = Math.round(e.nativeEvent.contentOffset.x / width);
+              setSelectedImageIndex(index);
+            }}
+          >
+            {listing.images.map((image, index) => (
+              <View key={index} style={styles.imageWrapper}>
+                <Image
+                  source={{ uri: image.watermarkedUri || image.uri }}
+                  style={styles.image}
+                />
+                {image.isFromCamera && image.hasWatermark && (
+                  <View style={styles.watermarkBadge}>
+                    <Text style={styles.watermarkBadgeText}>✓ SellEasy Verified</Text>
+                  </View>
+                )}
+                {!image.isFromCamera && (
+                  <View style={styles.galleryBadge}>
+                    <Text style={styles.galleryBadgeText}>Gallery Image</Text>
+                    <Text style={styles.galleryBadgeSubtext}>No watermark</Text>
+                  </View>
+                )}
+              </View>
+            ))}
+          </ScrollView>
+
+          {listing.images.length > 1 && (
+            <View style={styles.imageIndicators}>
+              {listing.images.map((_, index) => (
+                <View
+                  key={index}
+                  style={[
+                    styles.imageIndicator,
+                    index === selectedImageIndex && styles.imageIndicatorActive
+                  ]}
+                />
+              ))}
+            </View>
+          )}
+
+          {listing.images.length > 1 && (
+            <View style={styles.imageCounter2}>
+              <Text style={styles.imageCounterText2}>
+                {selectedImageIndex + 1}/{listing.images.length}
+              </Text>
+            </View>
+          )}
+
           <TouchableOpacity
             style={[styles.savePhotoButton, copiedFields.has('photo') && styles.savedButton]}
             onPress={savePhotoToGallery}
+            disabled={isPosting}
           >
-            <Text style={styles.savePhotoText}>
-              {copiedFields.has('photo') ? '✅ Photo Saved' : '📸 Save Photo to Gallery'}
-            </Text>
+            {isPosting ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.savePhotoText}>
+                {copiedFields.has('photo')
+                  ? '✅ Photos Saved'
+                  : listing.images.filter(img => img.isFromCamera).length > 0
+                  ? `📸 Save ${listing.images.filter(img => img.isFromCamera).length} Watermarked Photo${listing.images.filter(img => img.isFromCamera).length > 1 ? 's' : ''}`
+                  : '📸 No Camera Photos'}
+              </Text>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -444,11 +591,93 @@ const styles = StyleSheet.create({
   imageContainer: {
     position: 'relative'
   },
+  imageWrapper: {
+    width: width,
+    height: 300,
+    position: 'relative'
+  },
   image: {
-    width: '100%',
+    width: width,
     height: 300,
     resizeMode: 'cover',
     backgroundColor: '#000'
+  },
+  watermarkBadge: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    backgroundColor: 'rgba(34, 197, 94, 0.95)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5
+  },
+  watermarkBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+  galleryBadge: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    backgroundColor: 'rgba(156, 163, 175, 0.95)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5
+  },
+  galleryBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+  galleryBadgeSubtext: {
+    color: '#fff',
+    fontSize: 10,
+    marginTop: 2
+  },
+  imageIndicators: {
+    position: 'absolute',
+    bottom: 60,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6
+  },
+  imageIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.5)'
+  },
+  imageIndicatorActive: {
+    width: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)'
+  },
+  imageCounter2: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12
+  },
+  imageCounterText2: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold'
   },
   savePhotoButton: {
     position: 'absolute',
